@@ -102,7 +102,7 @@
     <p id="status">Scanning directory...</p>
 
     <div id="search-bar" style="display:none">
-        <input id="search-input" type="text" placeholder="Search TCanvas by name...">
+        <input id="search-input" type="text" placeholder="Search histograms and canvases by name...">
         <span id="search-count"></span>
     </div>
 
@@ -176,8 +176,10 @@
             }
         }
 
-        // All TCanvas cells for search
+        // All plottable cells for search
       const canvasCells = [];
+      const th1Cells = [];
+      const th2Cells = [];
 
       // ── Directory navigation state ───────────────────────────────────
       let currentFile = null;
@@ -190,6 +192,8 @@
 	  document.getElementById("grid-th1").innerHTML = "";
 	  document.getElementById("grid-th2").innerHTML = "";
 	  canvasCells.length = 0;
+	  th1Cells.length = 0;
+	  th2Cells.length = 0;
 	  document.getElementById("search-bar").style.display = "none";
 	  document.getElementById("search-input").value = "";
       }
@@ -256,6 +260,10 @@
               const { id, cell } = makeCell(grid, name);
               if (cls === "TCanvas") {
 		  canvasCells.push({ cell, label: name.toLowerCase() });
+              } else if (cls.match(/^TH1/)) {
+		  th1Cells.push({ cell, label: name.toLowerCase() });
+              } else if (cls.match(/^TH2/)) {
+		  th2Cells.push({ cell, label: name.toLowerCase() });
               }
 
               try {
@@ -273,9 +281,10 @@
 	  markEmpty("grid-th1");
 	  markEmpty("grid-th2");
 
-	  if (canvasCells.length > 0) {
+	  const totalCells = canvasCells.length + th1Cells.length + th2Cells.length;
+	  if (totalCells > 0) {
               document.getElementById("search-bar").style.display = "flex";
-              updateSearchCount(canvasCells.length, canvasCells.length);
+              updateSearchCount(totalCells, totalCells);
 	  }
       }
 
@@ -333,18 +342,19 @@
       // ── Search ───────────────────────────────────────────────────────
       function updateSearchCount(visible, total) {
           document.getElementById("search-count").textContent =
-                `${visible} / ${total} canvas(es)`;
+                `${visible} / ${total} object(s)`;
         }
 
         document.getElementById("search-input").addEventListener("input", function () {
             const query = this.value.toLowerCase().trim();
             let visible = 0;
-            canvasCells.forEach(({ cell, label }) => {
+            const allCells = [...canvasCells, ...th1Cells, ...th2Cells];
+            allCells.forEach(({ cell, label }) => {
                 const match = !query || label.includes(query);
                 cell.style.display = match ? "" : "none";
                 if (match) visible++;
             });
-            updateSearchCount(visible, canvasCells.length);
+            updateSearchCount(visible, allCells.length);
         });
         }); // end jsroot-ready
     </script>
