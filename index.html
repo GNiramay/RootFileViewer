@@ -95,6 +95,9 @@
         <div id="folder-btns"></div>
     </div>
     <div id="breadcrumb" style="margin: 10px 0; color: #aaa; font-size: 13px;"></div>
+    <div id="rootdir-back" style="display:none; margin-bottom: 10px;">
+        <button class="nav-btn btn-parent" id="rootdir-back-btn">&#8592; Back to top level</button>
+    </div>
 
     <p id="status">Scanning directory...</p>
 
@@ -179,6 +182,8 @@
       // ── Directory navigation state ───────────────────────────────────
       let currentFile = null;
       let currentFiles = [];
+      let topLevelFile = null;   // saved on first renderDir call per file
+      let topLevelFname = "";    // saved filename for breadcrumb
 
       function clearGrids() {
 	  document.getElementById("grid-tcanvas").innerHTML = "";
@@ -198,6 +203,15 @@
       async function renderDir(dir, fname, dirPath) {
 	  clearGrids();
 	  updateBreadcrumb(dirPath ? `${fname} / ${dirPath}` : fname);
+
+	  // Save top-level state so back button can restore it
+	  if (!dirPath) {
+	      topLevelFile  = dir;
+	      topLevelFname = fname;
+	      document.getElementById("rootdir-back").style.display = "none";
+	  } else {
+	      document.getElementById("rootdir-back").style.display = "block";
+	  }
 
 	  const keys = await getKeys(dir);
 	  const dirButtons = document.getElementById("folder-btns");
@@ -279,6 +293,13 @@
           if (typeof obj.get        === "function") return obj.get(name);
           throw new Error(`Cannot read "${name}" from container`);
       }
+
+      // ── Back button ─────────────────────────────────────────────────
+      document.getElementById("rootdir-back-btn").addEventListener("click", () => {
+          if (topLevelFile) {
+              renderDir(topLevelFile, topLevelFname, "");
+          }
+      });
 
       async function loadAllFiles(rootFiles) {
           currentFiles = rootFiles;
