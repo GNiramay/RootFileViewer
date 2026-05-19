@@ -2,7 +2,20 @@
 <html>
 <head>
     <title>ROOT Viewer</title>
-    <script src="https://root.cern/js/latest/scripts/JSRoot.core.js"></script>
+    <script type="importmap">
+    {
+      "imports": {
+        "jsroot": "https://root.cern/js/latest/modules/main.mjs"
+      }
+    }
+    </script>
+    <script type="module">
+    import { openFile, draw } from "jsroot";
+    window.JSROOT_openFile = openFile;
+    window.JSROOT_draw = draw;
+    window.JSROOT_ready = true;
+    document.dispatchEvent(new Event("jsroot-ready"));
+    </script>
     <style>
         body {
             font-family: sans-serif;
@@ -100,42 +113,28 @@
     <div class="grid" id="grid-th2"></div>
 
     <script>
-        // ── Directory listing ────────────────────────────────────────────
-        fetch("./")
-            .then(r => r.text())
-            .then(html => {
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, "text/html");
-                const links = Array.from(doc.querySelectorAll("a[href]"));
-                const hrefs = links.map(a => a.getAttribute("href"));
-
+        // Wait for JSROOT ES6 module to be ready
+        document.addEventListener("jsroot-ready", function() {
+        // ── Directory listing via files.php ─────────────────────────────
+        fetch("files.php")
+            .then(r => r.json())
+            .then(data => {
                 // Subdirectories
-                const folders = hrefs.filter(href =>
-                    href.endsWith("/") &&
-                    !href.startsWith("?") &&
-                    !href.startsWith("/") &&
-                    !href.startsWith("http") &&
-                    href !== "./" &&
-                    href !== "../"
-                );
+                const folders = data.dirs || [];
                 const container = document.getElementById("folder-btns");
                 if (folders.length > 0) {
                     document.getElementById("nav-label").style.display = "inline";
                     folders.forEach(folder => {
                         const btn = document.createElement("a");
                         btn.className = "nav-btn btn-folder";
-                        btn.href = folder;
-                        btn.textContent = folder.replace(/\/$/, "");
+                        btn.href = folder + "/";
+                        btn.textContent = folder;
                         container.appendChild(btn);
                     });
                 }
 
                 // ROOT files
-                const rootFiles = hrefs.filter(href =>
-                    href.endsWith(".root") &&
-                    !href.startsWith("/") &&
-                    !href.startsWith("http")
-                );
+                const rootFiles = data.root_files || [];
 
                 if (rootFiles.length === 0) {
                     document.getElementById("status").innerHTML =
@@ -150,7 +149,7 @@
             })
             .catch(err => {
                 document.getElementById("status").innerHTML =
-                    `<span class="error">Could not read directory listing: ${err}</span>`;
+                    `<span class="error">Could not load files.php: ${err}</span>`;
             });
 
         // ── Load all ROOT files ──────────────────────────────────────────
@@ -200,7 +199,7 @@
 	  clearGrids();
 	  updateBreadcrumb(dirPath ? `${fname} / ${dirPath}` : fname);
 
-	  const keys = dir.fKeys;
+	  const keys = await getKeys(dir);
 	  const dirButtons = document.getElementById("folder-btns");
 
 	  // Remove previously added ROOT-internal dir buttons (keep filesystem ones)
@@ -208,8 +207,10 @@
 	  document.getElementById("nav-label").style.display = "inline";
 
 	  const promises = keys.map(async k => {
-              const cls  = k.fClassName;
-              const name = k.fName;
+              const cls  = k.fClassName || k.className || "";
+              const name = k.fName      || k.name      || "";
+
+              if (!name) return;
 
               if (cls === "TDirectory" || cls === "TDirectoryFile") {
 		  // Add a nav button for this subdirectory
@@ -217,7 +218,7 @@
 		  btn.className = "nav-btn btn-folder btn-rootdir";
 		  btn.textContent = name;
 		  btn.onclick = async () => {
-                      const subdir = await dir.readObject(name);
+                      const subdir = await readObject(dir, name);
                       const subPath = dirPath ? `${dirPath}/${name}` : name;
                       renderDir(subdir, fname, subPath);
 		  };
@@ -244,8 +245,8 @@
               }
 
               try {
-		  const obj = await dir.readObject(name);
-		  await JSROOT.draw(id, obj, option);
+		  const obj = await readObject(dir, name);
+		  await window.JSROOT_draw(id, obj, option);
               } catch(err) {
 		  document.getElementById(id).innerHTML =
                       `<p class="error">Failed: ${err}</p>`;
@@ -264,24 +265,48 @@
 	  }
       }
 
-      function loadAllFiles(rootFiles) {
-	  currentFiles = rootFiles;
-	  const allPromises = rootFiles.map(async fname => {
-              try {
-		  const file = await JSROOT.openFile(fname);
-		  await renderDir(file, fname, "");
-              } catch(err) {
-		  const div = document.createElement("p");
-		  div.className = "error";
-		  div.textContent = `Failed to open ${fname}: ${err}`;
-		  document.getElementById("grid-tcanvas").appendChild(div);
-              }
-	  });
+      // ── Key reading helpers ─────────────────────────────────────────
+      // openFile() returns a file object with getKeyList()
+      // readObject() on a TDirectory returns an obj with fKeys
+      async function getKeys(obj) {
+          if (typeof obj.getKeyList === "function") return obj.getKeyList();
+          if (obj.fKeys) return obj.fKeys;
+          return [];
+      }
 
-	  Promise.all(allPromises).then(() => {
-              document.getElementById("status").textContent =
-		  `Loaded ${rootFiles.length} file(s).`;
-	  });
+      async function readObject(obj, name) {
+          if (typeof obj.readObject === "function") return obj.readObject(name);
+          if (typeof obj.get        === "function") return obj.get(name);
+          throw new Error(`Cannot read "${name}" from container`);
+      }
+
+      async function loadAllFiles(rootFiles) {
+          currentFiles = rootFiles;
+          const errors = [];
+
+          // Process files sequentially to avoid clearGrids() race condition
+          for (const fname of rootFiles) {
+              try {
+                  const file = await window.JSROOT_openFile(fname);
+                  await renderDir(file, fname, "");
+              } catch(err) {
+                  errors.push({ fname, err });
+              }
+          }
+
+          // Report any errors after all files processed
+          errors.forEach(({ fname, err }) => {
+              const grid = document.getElementById("grid-tcanvas");
+              if (grid) {
+                  const div = document.createElement("p");
+                  div.className = "error";
+                  div.textContent = `Failed to open ${fname}: ${err}`;
+                  grid.appendChild(div);
+              }
+          });
+
+          document.getElementById("status").textContent =
+              `Loaded ${rootFiles.length - errors.length} / ${rootFiles.length} file(s).`;
       }
       
       // ── Search ───────────────────────────────────────────────────────
@@ -300,6 +325,7 @@
             });
             updateSearchCount(visible, canvasCells.length);
         });
+        }); // end jsroot-ready
     </script>
 </body>
 </html>
