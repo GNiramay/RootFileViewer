@@ -345,12 +345,30 @@
                 `${visible} / ${total} object(s)`;
         }
 
+        // Convert a glob pattern (*, ?) to a RegExp
+        function globToRegex(pattern) {
+            const escaped = pattern
+                .replace(/[.+^${}()|[\]\\]/g, "\\$&")  // escape regex special chars
+                .replace(/\*/g, ".*")                        // * → .*
+                .replace(/\?/g, ".");                        // ? → .
+            return new RegExp("^" + escaped + "$");
+        }
+
+        function matchesQuery(label, query) {
+            if (!query) return true;
+            // Use glob if pattern contains * or ?, otherwise plain substring
+            if (query.includes("*") || query.includes("?")) {
+                return globToRegex(query).test(label);
+            }
+            return label.includes(query);
+        }
+
         document.getElementById("search-input").addEventListener("input", function () {
             const query = this.value.toLowerCase().trim();
             let visible = 0;
             const allCells = [...canvasCells, ...th1Cells, ...th2Cells];
             allCells.forEach(({ cell, label }) => {
-                const match = !query || label.includes(query);
+                const match = matchesQuery(label, query);
                 cell.style.display = match ? "" : "none";
                 if (match) visible++;
             });
