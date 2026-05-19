@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>ROOT Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
     <script type="importmap">
     {
       "imports": {
@@ -85,6 +86,21 @@
         }
         #search-input:focus { border-color: #1f5a94; }
         #search-count { color: #aaa; font-size: 13px; white-space: nowrap; }
+
+        /* Drag and drop */
+        .cell { cursor: default; }
+        .drag-handle {
+            text-align: center;
+            color: #555;
+            font-size: 16px;
+            cursor: grab;
+            user-select: none;
+            margin-bottom: 4px;
+            letter-spacing: 3px;
+        }
+        .drag-handle:active { cursor: grabbing; }
+        .cell.sortable-ghost { opacity: 0.3; }
+        .cell.sortable-chosen { box-shadow: 0 0 0 2px #1f5a94; }
     </style>
 </head>
 <body>
@@ -164,7 +180,7 @@
             const id = "div_" + sanitizeId(name) + "_" + Math.random().toString(36).slice(2);
             const cell = document.createElement("div");
             cell.className = "cell";
-            cell.innerHTML = `<h3>${name}</h3><div class="plot-div" id="${id}"></div>`;
+            cell.innerHTML = `<div class="drag-handle" title="Drag to reorder">&#8942;&#8942;</div><h3>${name}</h3><div class="plot-div" id="${id}"></div>`;
             grid.appendChild(cell);
             return { id, cell };
         }
@@ -280,6 +296,19 @@
 	  markEmpty("grid-tcanvas");
 	  markEmpty("grid-th1");
 	  markEmpty("grid-th2");
+
+	  // Enable drag-to-reorder on each grid
+	  ["grid-tcanvas", "grid-th1", "grid-th2"].forEach(gridId => {
+	      const el = document.getElementById(gridId);
+	      if (el && el.children.length > 1) {
+		  Sortable.create(el, {
+		      handle: ".drag-handle",
+		      animation: 150,
+		      ghostClass: "sortable-ghost",
+		      chosenClass: "sortable-chosen"
+		  });
+	      }
+	  });
 
 	  const totalCells = canvasCells.length + th1Cells.length + th2Cells.length;
 	  if (totalCells > 0) {
