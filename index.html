@@ -363,6 +363,11 @@
             return label.includes(query);
         }
 
+        // Prevent arrow keys from being captured by JSROOT canvas handlers
+        document.getElementById("search-input").addEventListener("keydown", function (e) {
+            e.stopPropagation();
+        });
+
         document.getElementById("search-input").addEventListener("input", function () {
             const query = this.value.toLowerCase().trim();
             let visible = 0;
