@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ROOT Viewer</title>
+    <script src="https://root.cern/js/latest/scripts/JSRoot.core.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #1a1a1a;
+            color: #eee;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { text-align: center; }
+        h2 { color: #aaa; border-bottom: 1px solid #444; padding-bottom: 6px; margin-top: 40px; }
+        #status { text-align: center; color: #aaa; margin: 10px 0; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .cell {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 10px;
+        }
+        .cell h3 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            color: #aaa;
+            text-align: center;
+            word-break: break-all;
+        }
+        .plot-div { width: 100%; height: 400px; }
+        .error { color: #f88; text-align: center; }
+        .empty { color: #666; font-style: italic; text-align: center; margin-top: 10px; }
+
+        /* Navigation */
+        #nav { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; align-items: center; }
+        .nav-btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-parent { background: #444; color: #eee; }
+        .btn-parent:hover { background: #555; }
+        .btn-folder { background: #1a4a7a; color: #eee; }
+        .btn-folder:hover { background: #1f5a94; }
+        #nav-label { color: #aaa; font-size: 13px; margin-right: 4px; }
+
+        /* Search */
+        #search-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 20px 0 0 0;
+        }
+        #search-input {
+            flex: 1;
+            padding: 8px 14px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            background: #2a2a2a;
+            color: #eee;
+            font-size: 14px;
+            outline: none;
+        }
+        #search-input:focus { border-color: #1f5a94; }
+        #search-count { color: #aaa; font-size: 13px; white-space: nowrap; }
+    </style>
+</head>
+<body>
+    <h1>ROOT File Viewer</h1>
+    <div id="nav">
+        <a class="nav-btn btn-parent" href="../">&#8593; Parent Directory</a>
+        <span id="nav-label" style="display:none">Subdirectories:</span>
+        <div id="folder-btns"></div>
+    </div>
+    <div id="breadcrumb" style="margin: 10px 0; color: #aaa; font-size: 13px;"></div>
+
+    <p id="status">Scanning directory...</p>
+
+    <div id="search-bar" style="display:none">
+        <input id="search-input" type="text" placeholder="Search TCanvas by name...">
+        <span id="search-count"></span>
+    </div>
+
+    <h2>TCanvas</h2>
+    <div class="grid" id="grid-tcanvas"></div>
+
+    <h2>TH1</h2>
+    <div class="grid" id="grid-th1"></div>
+
+    <h2>TH2</h2>
+    <div class="grid" id="grid-th2"></div>
+
+    <script>
+        // ── Directory listing ────────────────────────────────────────────
+        fetch("./")
+            .then(r => r.text())
+            .then(html => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, "text/html");
+                const links = Array.from(doc.querySelectorAll("a[href]"));
+                const hrefs = links.map(a => a.getAttribute("href"));
+
+                // Subdirectories
+                const folders = hrefs.filter(href =>
+                    href.endsWith("/") &&
+                    !href.startsWith("?") &&
+                    !href.startsWith("/") &&
+                    !href.startsWith("http") &&
+                    href !== "./" &&
+                    href !== "../"
+                );
+                const container = document.getElementById("folder-btns");
+                if (folders.length > 0) {
+                    document.getElementById("nav-label").style.display = "inline";
+                    folders.forEach(folder => {
+                        const btn = document.createElement("a");
+                        btn.className = "nav-btn btn-folder";
+                        btn.href = folder;
+                        btn.textContent = folder.replace(/\/$/, "");
+                        container.appendChild(btn);
+                    });
+                }
+
+                // ROOT files
+                const rootFiles = hrefs.filter(href =>
+                    href.endsWith(".root") &&
+                    !href.startsWith("/") &&
+                    !href.startsWith("http")
+                );
+
+                if (rootFiles.length === 0) {
+                    document.getElementById("status").innerHTML =
+                        `<span class="error">No .root files found in this directory.</span>`;
+                    return;
+                }
+
+                document.getElementById("status").textContent =
+                    `Found ${rootFiles.length} ROOT file(s). Loading...`;
+
+                loadAllFiles(rootFiles);
+            })
+            .catch(err => {
+                document.getElementById("status").innerHTML =
+                    `<span class="error">Could not read directory listing: ${err}</span>`;
+            });
+
+        // ── Load all ROOT files ──────────────────────────────────────────
+        function sanitizeId(name) {
+            return name.replace(/[^a-zA-Z0-9]/g, "_");
+        }
+
+        function makeCell(grid, name) {
+            const id = "div_" + sanitizeId(name) + "_" + Math.random().toString(36).slice(2);
+            const cell = document.createElement("div");
+            cell.className = "cell";
+            cell.innerHTML = `<h3>${name}</h3><div class="plot-div" id="${id}"></div>`;
+            grid.appendChild(cell);
+            return { id, cell };
+        }
+
+        function markEmpty(gridId) {
+            const grid = document.getElementById(gridId);
+            if (grid.children.length === 0) {
+                grid.innerHTML = `<p class="empty">None found.</p>`;
+            }
+        }
+
+        // All TCanvas cells for search
+      const canvasCells = [];
+
+      // ── Directory navigation state ───────────────────────────────────
+      let currentFile = null;
+      let currentFiles = [];
+
+      function clearGrids() {
+	  document.getElementById("grid-tcanvas").innerHTML = "";
+	  document.getElementById("grid-th1").innerHTML = "";
+	  document.getElementById("grid-th2").innerHTML = "";
+	  canvasCells.length = 0;
+	  document.getElementById("search-bar").style.display = "none";
+	  document.getElementById("search-input").value = "";
+      }
+
+      function updateBreadcrumb(path) {
+	  const bc = document.getElementById("breadcrumb");
+	  if (!path) { bc.textContent = ""; return; }
+	  bc.textContent = "📂 " + path;
+      }
+
+      async function renderDir(dir, fname, dirPath) {
+	  clearGrids();
+	  updateBreadcrumb(dirPath ? `${fname} / ${dirPath}` : fname);
+
+	  const keys = dir.fKeys;
+	  const dirButtons = document.getElementById("folder-btns");
+
+	  // Remove previously added ROOT-internal dir buttons (keep filesystem ones)
+	  dirButtons.querySelectorAll(".btn-rootdir").forEach(b => b.remove());
+	  document.getElementById("nav-label").style.display = "inline";
+
+	  const promises = keys.map(async k => {
+              const cls  = k.fClassName;
+              const name = k.fName;
+
+              if (cls === "TDirectory" || cls === "TDirectoryFile") {
+		  // Add a nav button for this subdirectory
+		  const btn = document.createElement("button");
+		  btn.className = "nav-btn btn-folder btn-rootdir";
+		  btn.textContent = name;
+		  btn.onclick = async () => {
+                      const subdir = await dir.readObject(name);
+                      const subPath = dirPath ? `${dirPath}/${name}` : name;
+                      renderDir(subdir, fname, subPath);
+		  };
+		  dirButtons.appendChild(btn);
+		  return;
+              }
+
+              let grid   = null;
+              let option = "";
+
+              if (cls === "TCanvas") {
+		  grid = document.getElementById("grid-tcanvas"); option = "";
+              } else if (cls.match(/^TH1/)) {
+		  grid = document.getElementById("grid-th1"); option = "hist";
+              } else if (cls.match(/^TH2/)) {
+		  grid = document.getElementById("grid-th2"); option = "colz";
+              } else {
+		  return;
+              }
+
+              const { id, cell } = makeCell(grid, name);
+              if (cls === "TCanvas") {
+		  canvasCells.push({ cell, label: name.toLowerCase() });
+              }
+
+              try {
+		  const obj = await dir.readObject(name);
+		  await JSROOT.draw(id, obj, option);
+              } catch(err) {
+		  document.getElementById(id).innerHTML =
+                      `<p class="error">Failed: ${err}</p>`;
+              }
+	  });
+
+	  await Promise.all(promises);
+
+	  markEmpty("grid-tcanvas");
+	  markEmpty("grid-th1");
+	  markEmpty("grid-th2");
+
+	  if (canvasCells.length > 0) {
+              document.getElementById("search-bar").style.display = "flex";
+              updateSearchCount(canvasCells.length, canvasCells.length);
+	  }
+      }
+
+      function loadAllFiles(rootFiles) {
+	  currentFiles = rootFiles;
+	  const allPromises = rootFiles.map(async fname => {
+              try {
+		  const file = await JSROOT.openFile(fname);
+		  await renderDir(file, fname, "");
+              } catch(err) {
+		  const div = document.createElement("p");
+		  div.className = "error";
+		  div.textContent = `Failed to open ${fname}: ${err}`;
+		  document.getElementById("grid-tcanvas").appendChild(div);
+              }
+	  });
+
+	  Promise.all(allPromises).then(() => {
+              document.getElementById("status").textContent =
+		  `Loaded ${rootFiles.length} file(s).`;
+	  });
+      }
+      
+      // ── Search ───────────────────────────────────────────────────────
+      function updateSearchCount(visible, total) {
+          document.getElementById("search-count").textContent =
+                `${visible} / ${total} canvas(es)`;
+        }
+
+        document.getElementById("search-input").addEventListener("input", function () {
+            const query = this.value.toLowerCase().trim();
+            let visible = 0;
+            canvasCells.forEach(({ cell, label }) => {
+                const match = !query || label.includes(query);
+                cell.style.display = match ? "" : "none";
+                if (match) visible++;
+            });
+            updateSearchCount(visible, canvasCells.length);
+        });
+    </script>
+</body>
+</html>
