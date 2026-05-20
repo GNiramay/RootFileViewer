@@ -119,6 +119,13 @@
 
     <div id="search-bar" style="display:none">
         <input id="search-input" type="text" placeholder="Search histograms and canvases by name...">
+        <label style="color:#aaa; font-size:13px; white-space:nowrap;">
+            Search depth:
+            <input id="depth-input" type="number" min="0" max="10" value="0"
+                style="width:50px; padding:6px 8px; border-radius:6px; border:1px solid #444;
+                       background:#2a2a2a; color:#eee; font-size:14px; margin-left:4px;">
+        </label>
+        <button id="depth-apply" class="nav-btn btn-folder" style="padding:6px 14px; font-size:13px;">Apply</button>
         <span id="search-count"></span>
     </div>
 
@@ -220,8 +227,88 @@
 	  bc.textContent = "📂 " + path;
       }
 
+      // ── Sortable instances tracker (destroy before re-creating) ────
+      const sortableInstances = [];
+
+      // ── Recursive collector: sequential to avoid race conditions ────
+      // Walks dir up to maxDepth levels, drawing all plottable objects.
+      // At currentDepth===0 it also adds nav buttons for subdirectories.
+      async function collectFromDir(dir, dirPath, currentDepth, maxDepth) {
+          const keys = await getKeys(dir);
+
+          for (const k of keys) {
+              const cls  = k.fClassName || k.className || "";
+              const name = k.fName      || k.name      || "";
+              if (!name) continue;
+
+              if (cls === "TDirectory" || cls === "TDirectoryFile") {
+                  // Always add nav button at top level for manual navigation
+                  if (currentDepth === 0) {
+                      const dirButtons = document.getElementById("folder-btns");
+                      const btn = document.createElement("button");
+                      btn.className = "nav-btn btn-folder btn-rootdir";
+                      btn.textContent = name;
+                      btn.onclick = async () => {
+                          const subdir = await readObject(dir, name);
+                          const subPath = dirPath ? `${dirPath}/${name}` : name;
+                          renderDir(subdir, topLevelFname, subPath);
+                      };
+                      dirButtons.appendChild(btn);
+                  }
+                  // Recurse if within maxDepth
+                  if (currentDepth < maxDepth) {
+                      try {
+                          const subdir = await readObject(dir, name);
+                          const subPath = dirPath ? `${dirPath}/${name}` : name;
+                          await collectFromDir(subdir, subPath, currentDepth + 1, maxDepth);
+                      } catch(err) {
+                          console.warn(`Could not recurse into ${name}: ${err}`);
+                      }
+                  }
+                  continue;
+              }
+
+              let grid   = null;
+              let option = "";
+              // Prefix label with path so user knows which subdir it came from
+              const label = dirPath ? `${dirPath}/${name}` : name;
+
+              if (cls === "TCanvas") {
+                  grid = document.getElementById("grid-tcanvas"); option = "";
+              } else if (cls.match(/^TH1/)) {
+                  grid = document.getElementById("grid-th1"); option = "hist";
+              } else if (cls.match(/^TH2/)) {
+                  grid = document.getElementById("grid-th2"); option = "colz";
+              } else {
+                  continue;
+              }
+
+              const { id, cell } = makeCell(grid, label);
+              if (cls === "TCanvas") {
+                  canvasCells.push({ cell, label: label.toLowerCase() });
+              } else if (cls.match(/^TH1/)) {
+                  th1Cells.push({ cell, label: label.toLowerCase() });
+              } else if (cls.match(/^TH2/)) {
+                  th2Cells.push({ cell, label: label.toLowerCase() });
+              }
+
+              try {
+                  const obj = await readObject(dir, name);
+                  await window.JSROOT_draw(id, obj, option);
+              } catch(err) {
+                  document.getElementById(id).innerHTML =
+                      `<p class="error">Failed: ${err}</p>`;
+              }
+          }
+      }
+
       async function renderDir(dir, fname, dirPath) {
 	  clearGrids();
+
+	  // Destroy existing Sortable instances before re-creating
+	  sortableInstances.forEach(s => s.destroy());
+	  sortableInstances.length = 0;
+
 	  updateBreadcrumb(dirPath ? `${fname} / ${dirPath}` : fname);
 
 	  // Save top-level state so back button can restore it
@@ -233,80 +320,28 @@
 	      document.getElementById("rootdir-back").style.display = "block";
 	  }
 
-	  const keys = await getKeys(dir);
-	  const dirButtons = document.getElementById("folder-btns");
-
-	  // Remove previously added ROOT-internal dir buttons (keep filesystem ones)
-	  dirButtons.querySelectorAll(".btn-rootdir").forEach(b => b.remove());
+	  // Remove previously added ROOT-internal dir buttons
+	  document.getElementById("folder-btns")
+	      .querySelectorAll(".btn-rootdir").forEach(b => b.remove());
 	  document.getElementById("nav-label").style.display = "inline";
 
-	  const promises = keys.map(async k => {
-              const cls  = k.fClassName || k.className || "";
-              const name = k.fName      || k.name      || "";
-
-              if (!name) return;
-
-              if (cls === "TDirectory" || cls === "TDirectoryFile") {
-		  // Add a nav button for this subdirectory
-		  const btn = document.createElement("button");
-		  btn.className = "nav-btn btn-folder btn-rootdir";
-		  btn.textContent = name;
-		  btn.onclick = async () => {
-                      const subdir = await readObject(dir, name);
-                      const subPath = dirPath ? `${dirPath}/${name}` : name;
-                      renderDir(subdir, fname, subPath);
-		  };
-		  dirButtons.appendChild(btn);
-		  return;
-              }
-
-              let grid   = null;
-              let option = "";
-
-              if (cls === "TCanvas") {
-		  grid = document.getElementById("grid-tcanvas"); option = "";
-              } else if (cls.match(/^TH1/)) {
-		  grid = document.getElementById("grid-th1"); option = "hist";
-              } else if (cls.match(/^TH2/)) {
-		  grid = document.getElementById("grid-th2"); option = "colz";
-              } else {
-		  return;
-              }
-
-              const { id, cell } = makeCell(grid, name);
-              if (cls === "TCanvas") {
-		  canvasCells.push({ cell, label: name.toLowerCase() });
-              } else if (cls.match(/^TH1/)) {
-		  th1Cells.push({ cell, label: name.toLowerCase() });
-              } else if (cls.match(/^TH2/)) {
-		  th2Cells.push({ cell, label: name.toLowerCase() });
-              }
-
-              try {
-		  const obj = await readObject(dir, name);
-		  await window.JSROOT_draw(id, obj, option);
-              } catch(err) {
-		  document.getElementById(id).innerHTML =
-                      `<p class="error">Failed: ${err}</p>`;
-              }
-	  });
-
-	  await Promise.all(promises);
+	  const maxDepth = parseInt(document.getElementById("depth-input").value, 10) || 0;
+	  await collectFromDir(dir, dirPath, 0, maxDepth);
 
 	  markEmpty("grid-tcanvas");
 	  markEmpty("grid-th1");
 	  markEmpty("grid-th2");
 
-	  // Enable drag-to-reorder on each grid
+	  // Enable drag-to-reorder on each grid; track instances for cleanup
 	  ["grid-tcanvas", "grid-th1", "grid-th2"].forEach(gridId => {
 	      const el = document.getElementById(gridId);
-	      if (el && el.children.length > 1) {
-		  Sortable.create(el, {
+	      if (el && el.querySelectorAll(".cell").length > 1) {
+		  sortableInstances.push(Sortable.create(el, {
 		      handle: ".drag-handle",
 		      animation: 150,
 		      ghostClass: "sortable-ghost",
 		      chosenClass: "sortable-chosen"
-		  });
+		  }));
 	      }
 	  });
 
@@ -334,6 +369,13 @@
 
       // ── Back button ─────────────────────────────────────────────────
       document.getElementById("rootdir-back-btn").addEventListener("click", () => {
+          if (topLevelFile) {
+              renderDir(topLevelFile, topLevelFname, "");
+          }
+      });
+
+      // ── Depth Apply button ───────────────────────────────────────────
+      document.getElementById("depth-apply").addEventListener("click", () => {
           if (topLevelFile) {
               renderDir(topLevelFile, topLevelFname, "");
           }
@@ -394,6 +436,9 @@
 
         // Prevent arrow keys from being captured by JSROOT canvas handlers
         document.getElementById("search-input").addEventListener("keydown", function (e) {
+            e.stopPropagation();
+        });
+        document.getElementById("depth-input").addEventListener("keydown", function (e) {
             e.stopPropagation();
         });
 
