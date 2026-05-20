@@ -224,7 +224,7 @@
       function updateBreadcrumb(path) {
 	  const bc = document.getElementById("breadcrumb");
 	  if (!path) { bc.textContent = ""; return; }
-	  bc.textContent = "📂 " + path;
+	  bc.textContent = path;
       }
 
       // ── Sortable instances tracker (destroy before re-creating) ────
