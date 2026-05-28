@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Viewer</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='4' fill='%231a1a1a'/><rect x='4' y='4' width='18' height='24' rx='2' fill='none' stroke='%231f5a94' stroke-width='2'/><rect x='8' y='10' width='10' height='1.5' rx='1' fill='%231f5a94'/><rect x='8' y='14' width='10' height='1.5' rx='1' fill='%231f5a94'/><rect x='8' y='18' width='6' height='1.5' rx='1' fill='%231f5a94'/><rect x='18' y='20' width='10' height='10' rx='2' fill='%231a1a1a'/><text x='23' y='29' font-size='9' font-family='sans-serif' font-weight='bold' fill='%23e55' text-anchor='middle'>PDF</text></svg>">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+    <!-- PDF.js from cdnjs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.js"></script>
+    <script>
+        // Point PDF.js worker at the matching version on cdnjs
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.js";
+    </script>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #1a1a1a;
+            color: #eee;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { text-align: center; }
+        #status { text-align: center; color: #aaa; margin: 10px 0; }
+
+        /* Navigation */
+        #nav { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; align-items: center; }
+        .nav-btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-parent { background: #444; color: #eee; }
+        .btn-parent:hover { background: #555; }
+        .btn-folder { background: #1a4a7a; color: #eee; }
+        .btn-folder:hover { background: #1f5a94; }
+        #nav-label { color: #aaa; font-size: 13px; margin-right: 4px; }
+
+        /* Search */
+        #search-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 20px 0 16px 0;
+        }
+        #search-input {
+            flex: 1;
+            padding: 8px 14px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            background: #2a2a2a;
+            color: #eee;
+            font-size: 14px;
+            outline: none;
+        }
+        #search-input:focus { border-color: #1f5a94; }
+        #search-count { color: #aaa; font-size: 13px; white-space: nowrap; }
+
+        /* Gallery grid */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-top: 4px;
+        }
+
+        /* Individual PDF cell */
+        .cell {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .cell h3 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            color: #aaa;
+            text-align: center;
+            word-break: break-all;
+            width: 100%;
+        }
+
+        /* Drag handle */
+        .drag-handle {
+            text-align: center;
+            color: #555;
+            font-size: 16px;
+            cursor: grab;
+            user-select: none;
+            margin-bottom: 4px;
+            letter-spacing: 3px;
+            width: 100%;
+        }
+        .drag-handle:active { cursor: grabbing; }
+        .cell.sortable-ghost  { opacity: 0.3; }
+        .cell.sortable-chosen { box-shadow: 0 0 0 2px #1f5a94; }
+
+        /* PDF preview canvas wrapper — click opens the PDF */
+        .pdf-wrap {
+            width: 100%;
+            position: relative;
+            cursor: pointer;
+        }
+        .pdf-wrap canvas {
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 4px;
+            border: 1px solid #333;
+        }
+        .pdf-wrap:hover canvas {
+            border-color: #1f5a94;
+        }
+        /* Page counter badge */
+        .page-badge {
+            position: absolute;
+            bottom: 6px;
+            right: 8px;
+            background: rgba(0,0,0,0.65);
+            color: #ccc;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            pointer-events: none;
+        }
+        /* Open-link below preview */
+        .pdf-link {
+            display: inline-block;
+            margin-top: 8px;
+            font-size: 12px;
+            color: #1f5a94;
+            text-decoration: none;
+        }
+        .pdf-link:hover { text-decoration: underline; color: #4a9fd4; }
+
+        /* Loading / error states */
+        .pdf-loading {
+            width: 100%;
+            height: 180px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #555;
+            font-size: 13px;
+            font-style: italic;
+        }
+        .error { color: #f88; text-align: center; font-size: 13px; padding: 10px 0; }
+        .empty { color: #666; font-style: italic; text-align: center; margin-top: 10px; }
+
+        @media (max-width: 800px) {
+            .grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 500px) {
+            .grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF Viewer</h1>
+
+    <div id="nav">
+        <a class="nav-btn btn-parent" href="../">&#8593; Parent Directory</a>
+        <span id="nav-label" style="display:none">Subdirectories:</span>
+        <div id="folder-btns"></div>
+    </div>
+
+    <p id="status">Scanning directory...</p>
+
+    <div id="search-bar" style="display:none">
+        <input id="search-input" type="text" placeholder="Search PDFs by filename...">
+        <span id="search-count"></span>
+    </div>
+
+    <div class="grid" id="grid-pdf"></div>
+
+    <footer style="text-align:center; margin-top:60px; padding:16px 0; color:#555; font-size:13px; border-top:1px solid #333;">
+        Powered by <a href="https://github.com/GNiramay/RootFileViewer/" target="_blank" style="color:#1f5a94; text-decoration:none;">ROOT File Viewer</a> - An open source project<br>
+        Credits: Niramay Gogate
+    </footer>
+
+    <script>
+    // ── Glob search helper (mirrors index.html) ─────────────────────────
+    function globToRegex(pattern) {
+        const escaped = pattern
+            .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+            .replace(/\*/g, ".*")
+            .replace(/\?/g, ".");
+        return new RegExp("^" + escaped + "$");
+    }
+
+    function matchesQuery(label, query) {
+        if (!query) return true;
+        if (query.includes("*") || query.includes("?")) {
+            return globToRegex(query).test(label);
+        }
+        return label.includes(query);
+    }
+
+    // ── Cell registry for search / sortable ────────────────────────────
+    const pdfCells = [];   // { cell, label }
+    let sortable = null;
+
+    function updateSearchCount(visible, total) {
+        document.getElementById("search-count").textContent =
+            `${visible} / ${total} file(s)`;
+    }
+
+    // ── Sanitize an id string ────────────────────────────────────────────
+    function sanitizeId(name) {
+        return name.replace(/[^a-zA-Z0-9]/g, "_");
+    }
+
+    // ── Render one PDF's first page into a <canvas> ─────────────────────
+    async function renderPdfPreview(fname, wrapEl) {
+        // Show a loading placeholder while PDF.js fetches the file
+        wrapEl.innerHTML = `<div class="pdf-loading">Loading…</div>`;
+
+        let pdf;
+        try {
+            pdf = await pdfjsLib.getDocument(fname).promise;
+        } catch (err) {
+            wrapEl.innerHTML = `<p class="error">Could not load PDF:<br>${err.message}</p>`;
+            return;
+        }
+
+        const page = await pdf.getPage(1);
+
+        // Scale so that the rendered canvas pixel width matches the
+        // display width of the wrapper element (devicePixelRatio aware).
+        const displayW = wrapEl.offsetWidth || 300;
+        const dpr      = window.devicePixelRatio || 1;
+        const viewport = page.getViewport({ scale: 1 });
+        const scale    = (displayW * dpr) / viewport.width;
+        const scaled   = page.getViewport({ scale });
+
+        const canvas  = document.createElement("canvas");
+        canvas.width  = scaled.width;
+        canvas.height = scaled.height;
+
+        await page.render({
+            canvasContext: canvas.getContext("2d"),
+            viewport: scaled
+        }).promise;
+
+        // Swap loading placeholder with the rendered canvas
+        wrapEl.innerHTML = "";
+        wrapEl.appendChild(canvas);
+
+        // Page count badge (e.g. "3 pages")
+        if (pdf.numPages > 1) {
+            const badge = document.createElement("span");
+            badge.className = "page-badge";
+            badge.textContent = `${pdf.numPages} pages`;
+            wrapEl.appendChild(badge);
+        }
+    }
+
+    // ── Build one gallery cell ──────────────────────────────────────────
+    function makeCell(grid, fname) {
+        const id   = "wrap_" + sanitizeId(fname) + "_" + Math.random().toString(36).slice(2);
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        cell.innerHTML = `
+            <div class="drag-handle" title="Drag to reorder">&#8942;&#8942;</div>
+            <h3>${fname}</h3>
+            <div class="pdf-wrap" id="${id}"></div>
+            <a class="pdf-link" href="${fname}" target="_blank">&#128196; Open PDF</a>
+        `;
+        grid.appendChild(cell);
+        return { id, cell };
+    }
+
+    // ── Load all PDF files ──────────────────────────────────────────────
+    async function loadPdfs(pdfFiles) {
+        const grid = document.getElementById("grid-pdf");
+        grid.innerHTML = "";
+        pdfCells.length = 0;
+
+        if (sortable) { sortable.destroy(); sortable = null; }
+
+        if (pdfFiles.length === 0) {
+            grid.innerHTML = `<p class="empty">No PDF files found in this directory.</p>`;
+            document.getElementById("status").innerHTML =
+                `<span style="color:#f88">No .pdf files found in this directory.</span>`;
+            return;
+        }
+
+        document.getElementById("status").textContent =
+            `Found ${pdfFiles.length} PDF file(s). Rendering previews…`;
+
+        // Click on preview wrapper opens the PDF in a new tab
+        for (const fname of pdfFiles) {
+            const { id, cell } = makeCell(grid, fname);
+            pdfCells.push({ cell, label: fname.toLowerCase() });
+
+            const wrapEl = document.getElementById(id);
+            // Make the whole preview area a link
+            wrapEl.addEventListener("click", () => window.open(fname, "_blank"));
+
+            // Render asynchronously so cells appear progressively
+            renderPdfPreview(fname, wrapEl).catch(err => {
+                wrapEl.innerHTML = `<p class="error">${err}</p>`;
+            });
+        }
+
+        // Enable drag-to-reorder once cells exist
+        if (pdfFiles.length > 1) {
+            sortable = Sortable.create(grid, {
+                handle:      ".drag-handle",
+                animation:   150,
+                ghostClass:  "sortable-ghost",
+                chosenClass: "sortable-chosen"
+            });
+        }
+
+        document.getElementById("search-bar").style.display = "flex";
+        updateSearchCount(pdfFiles.length, pdfFiles.length);
+        document.getElementById("status").textContent =
+            `Found ${pdfFiles.length} PDF file(s).`;
+    }
+
+    // ── Search ──────────────────────────────────────────────────────────
+    document.getElementById("search-input").addEventListener("input", function () {
+        const query = this.value.toLowerCase().trim();
+        let visible = 0;
+        pdfCells.forEach(({ cell, label }) => {
+            const match = matchesQuery(label, query);
+            cell.style.display = match ? "" : "none";
+            if (match) visible++;
+        });
+        updateSearchCount(visible, pdfCells.length);
+    });
+
+    // ── Bootstrap: fetch file list from files.php ───────────────────────
+    fetch("files.php")
+        .then(r => r.json())
+        .then(data => {
+            // Subdirectory navigation buttons (mirrors index.html)
+            const folders = data.dirs || [];
+            if (folders.length > 0) {
+                document.getElementById("nav-label").style.display = "inline";
+                const container = document.getElementById("folder-btns");
+                folders.forEach(folder => {
+                    const btn = document.createElement("a");
+                    btn.className = "nav-btn btn-folder";
+                    btn.href      = folder + "/";
+                    btn.textContent = folder;
+                    container.appendChild(btn);
+                });
+            }
+
+            loadPdfs(data.pdf_files || []);
+        })
+        .catch(err => {
+            document.getElementById("status").innerHTML =
+                `<span style="color:#f88">Could not load files.php: ${err}</span>`;
+        });
+    </script>
+</body>
+</html>
